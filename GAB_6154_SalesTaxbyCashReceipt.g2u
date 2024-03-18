@@ -1,0 +1,157 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Sales Tax By State")
+Gui.Form..Size(5775,3030)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form.lbl1.Create(Label,"Enter Cash Receipt Date Range:",True,4095,390,0,720,450,True,0,"Arial",8,-2147483633,0)
+Gui.Form.dtp1.Create(DatePicker)
+Gui.Form.dtp1.Size(1935,285)
+Gui.Form.dtp1.Position(795,1155)
+Gui.Form.dtp2.Create(DatePicker)
+Gui.Form.dtp2.Size(1935,285)
+Gui.Form.dtp2.Position(3075,1155)
+Gui.Form.cmd1.Create(Button)
+Gui.Form.cmd1.Size(1245,330)
+Gui.Form.cmd1.Position(3330,1800)
+Gui.Form.cmd1.Caption("Run")
+Gui.Form.cmd1.Event(Click,cmd1_Click)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+GUI.Form..Show
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_6154_SalesTaxbyCash.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(Form_unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.cmd1_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmd1_Click_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+v.Local.ssql.Declare
+v.Local.icount.Declare
+V.Local.sret.Declare
+V.Local.dmaxInvDate.Declare
+V.Local.dminInvDate.Declare
+v.Global.iBIRUNID.Declare
+v.Local.sBegDate.Declare
+v.Local.sEndDate.Declare
+v.Local.sparams.Declare
+v.Local.lOpenAmt.Declare
+v.local.svalues.declare
+v.Global.iLogId.declare
+V.Local.sstart.Declare
+v.Local.send.Declare
+v.Local.iCon.Declare(Long)
+v.Local.sCols.Declare
+
+F.ODBC.Connection!con.OpenCompanyConnection(500)
+'F.Global.Object.CreateDB("GlobalDB",v.Caller.CompanyCode,v.Ambient.DBServerName,v.local.iCon)
+
+V.Local.sstart.Set(v.Screen.Form!dtp1.Value.PervasiveDate)
+V.Local.send.Set(v.Screen.Form!dtp2.Value.PervasiveDate)
+
+F.Intrinsic.UI.InvokeWaitDialog("Building Invoice List")
+
+'dtInvList contains a list of invoices that have had cash applied during the entered date range
+F.Intrinsic.String.Build("select invoice, sum(amt_invoice) as balance from AR_OPEN_ITEMS where invoice in (select invoice from V_AR_OPEN_ITEMS where date_transaction between '{0}' and '{1}' and batch_code = '11')group by invoice;",V.Local.sstart,v.Local.send,v.local.ssql)
+
+F.Data.DataTable.CreateFromSQL("dtInvList","con" ,v.Local.ssql)
+F.Data.DataTable.AddColumn("dtInvList","InvoiceDate","Date")
+
+F.Data.DataView.Create("dtInvList","dvInvList")
+
+F.Intrinsic.UI.ChangeWaitStatus("Building Tax Records")
+
+'Find invoice date on all invoices that have had cash applied during the given date range.
+F.Intrinsic.Control.For(v.Local.iCount, 0, v.DataView.dtInvList!dvInvList.RowCount--, 1)
+	F.Intrinsic.String.Build("select date_invoice from ORDER_HIST_HEAD where invoice = '{0}';",v.DataView.dtInvList!dvInvList(v.Local.icount).invoice!fieldval,v.Local.ssql) 
+	F.ODBC.Connection!con.ExecuteAndReturn(v.Local.ssql,v.local.sret)
+	f.Intrinsic.Control.If(v.Ambient.executeandreturnEOF,=,False)
+		F.Data.DataView.SetValue("dtInvList","dvInvList", v.Local.icount, "InvoiceDate",v.Local.sret)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(v.Local.iCount)
+
+'Filter out invoices that have an open balance
+F.Data.DataView.SetFilter("dtInvList","dvInvList","InvoiceDate > '1900-01-01'")
+F.Data.DataView.SetFilter("dtInvList","dvInvList","balance <= 0")
+
+'Tax report callwrapper uses beginning/end date as params.  Find earliest and latest invoice date to pass to callwrapper for building tax records.	
+F.Data.DataTable.Compute("dtInvList","MIN(InvoiceDate)",,v.Local.dminInvDate)
+F.Data.DataTable.Compute("dtInvList","MAX(InvoiceDate)",,v.Local.dmaxInvDate)
+
+
+F.Global.BI.GetRunID(v.Global.iBIRUNID)
+F.Intrinsic.String.Format(V.Local.dminInvDate,"YYYYMMDD",v.Local.sBegDate) 
+F.Intrinsic.String.Format(V.Local.dmaxInvDate,"YYYYMMDD",v.Local.sEndDate) 
+
+F.Intrinsic.String.Build("{0}!*!{1}!*!{2}!*!{3}!*!{4}!*!{5}!*!{6}",v.Global.iBIRUNID,"0",v.Local.sBegDate,v.Local.sEndDate,"1","ZDR","0",v.Local.sParams)
+F.Global.General.CallWrapperSync(8140,v.Local.sParams)
+
+F.Intrinsic.UI.ChangeWaitStatus("Removing Invoices with Balances")
+
+F.Intrinsic.String.Build("Select RunID As BIRUNID,BI_REPORT_ID As REPORTID,SEQ,STATE,PCODE,TAX_DESC,INVOICE,INV_DATE,GROSS,EXEMPT,TAXABLE,TAX,TAX_TYPE FROM Y_SA_SALES_TAX Where RUNID = '{0}'",v.Global.iBIRUNID,v.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("dtSalesTax","con",v.Local.sSQL,True)
+
+'F.Intrinsic.Debug.InvokeDebugger
+'f.Intrinsic.Debug.Stop
+V.Local.sCols.Set(ST.BIRUNID*!*ST.REPORTID*!*ST.SEQ*!*ST.STATE*!*ST.PCODE*!*ST.TAX_DESC*!*ST.INVOICE*!*ST.INV_DATE*!*ST.GROSS*!*ST.EXEMPT*!*ST.TAXABLE*!*ST.TAX*!*ST.TAX_TYPE)
+
+'dtInvList datatable to filter out any invoices that don't meet criteria
+F.Data.Linq.Join("LeftJoin","datatable","dtSalesTax*!*ST","dataview","dtInvLIst","dvInvList*!*IL","ST.Invoice = IL.Invoice",v.Local.sCols,"IL.balance <= 0","","","dtFiltered",True) 
+
+f.Data.DataTable.SaveToDB("dtFiltered","con","Z_SA_SALES_TAX","BIRUNID",128)
+
+F.Intrinsic.UI.CloseWaitDialog
+
+v.Local.sParams.Set("FRDATE*!*TODATE*!*ALLDATES*!*TITLE")
+f.Intrinsic.String.Build("{0}*!*{1}*!*{2}*!*{3}",v.Screen.Form!dtp1.value,v.Screen.Form!dtp2.value,0,"Akkerman Tax Report",v.Local.sValues) 
+F.Global.BI.RunReportPreProcessor(v.Global.iBIRUNID,v.Global.iLogId,v.Local.sParams,v.Local.sValues,"",-1,True,"",-1,"",-1,"","",v.Global.iLogId)
+
+F.ODBC.Connection!Con.Close
+
+F.Intrinsic.Control.CallSub(form_unload)
+
+F.Intrinsic.Control.Label("cmd1_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_6154_SalesTaxbyCash.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(form_unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.cmd1_Click.End
+
+Program.Sub.Form_UnLoad.Start
+F.Intrinsic.Control.SetErrorHandler("Form_Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Form_Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GAB_6154_SalesTaxbyCash.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$SUPERVSR$}$10/16/2020 11:35:14 AM$}$False
+Program.Sub.Comments.End
